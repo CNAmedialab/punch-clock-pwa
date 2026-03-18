@@ -1,0 +1,24 @@
+{
+  "name": "punch-clock-pwa",
+  "version": "1.0.0",
+  "description": "輕量級 PWA 打卡系統，透過掃描每日動態 QR code 搭配 GPS 定位記錄上下班時間。",
+  "main": "sw.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CNAmedialab/punch-clock-pwa.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/CNAmedialab/punch-clock-pwa/issues"
+  },
+  "homepage": "https://github.com/CNAmedialab/punch-clock-pwa#readme",
+  "dependencies": {
+    "firebase-admin": "^13.7.0"
+  }
+}
