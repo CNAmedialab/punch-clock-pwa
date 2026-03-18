@@ -8,7 +8,8 @@
       ".gitignore",
       "README.md",
       "openspec/**",
-      "node_modules/**"
+      "node_modules/**",
+      "scripts/**"
     ],
     "rewrites": [
       {

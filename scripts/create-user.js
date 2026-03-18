@@ -1,0 +1,77 @@
+#!/usr/bin/env node
+/**
+ * create-user.js
+ * 
+ * 一次性 script：建立 Firebase Auth 使用者
+ * 使用方式：node scripts/create-user.js
+ * 
+ * 前置需求：scripts/serviceAccountKey.json
+ */
+
+const path = require('path');
+// firebase-admin is installed at project root
+const admin = require(path.join(__dirname, '..', 'node_modules', 'firebase-admin'));
+
+const keyPath = path.join(__dirname, '..', 'serviceAccountKey.json');
+let serviceAccount;
+try {
+  serviceAccount = require(keyPath);
+} catch (err) {
+  console.error('❌ 找不到 serviceAccountKey.json');
+  process.exit(1);
+}
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  projectId: 'medialab-356306'
+});
+
+const USERS = [
+  {
+    email: 'lichuehhuang@gws.cna.com.tw',
+    password: '***',  // 臨時密碼，請通知使用者盡快修改
+    displayName: '李絜珩',
+    role: 'admin'
+  }
+];
+
+async function createUsers() {
+  for (const userData of USERS) {
+    try {
+      // Check if user already exists
+      let user;
+      try {
+        user = await admin.auth().getUserByEmail(userData.email);
+        console.log(`⚠️  使用者已存在：${userData.email} (uid: ${user.uid})`);
+      } catch (notFound) {
+        // Create new user
+        user = await admin.auth().createUser({
+          email: userData.email,
+          password: userData.password,
+          displayName: userData.displayName,
+          emailVerified: false
+        });
+        console.log(`✅ 建立使用者：${userData.email} (uid: ${user.uid})`);
+        console.log(`   臨時密碼：${userData.password}`);
+      }
+
+      // Set custom claims
+      if (userData.role) {
+        await admin.auth().setCustomUserClaims(user.uid, { role: userData.role });
+        console.log(`✅ 設定 role: "${userData.role}"`);
+      }
+    } catch (err) {
+      console.error(`❌ 處理 ${userData.email} 失敗：`, err.message);
+    }
+  }
+
+  console.log('\n=== 完成 ===');
+  console.log('📧 請通知以下使用者登入後修改密碼：');
+  USERS.forEach(u => {
+    console.log(`   ${u.email} / 臨時密碼：${u.password}`);
+  });
+
+  await admin.app().delete();
+}
+
+createUsers();
