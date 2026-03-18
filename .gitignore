@@ -1,24 +1,10 @@
-# Dependencies
-node_modules/
-.npm/
-
-# Firebase
-.firebase/
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+# Firebase config (credentials should not be in standalone files)
+js/firebase-config.js
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
-.env.*.local
+# IDE
+.vscode/
+.idea/
