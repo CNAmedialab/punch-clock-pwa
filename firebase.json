@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "target": "punch-clock",
     "public": ".",
     "ignore": [
       "firebase.json",

@@ -1,9 +1,9 @@
 # Spec: Firestore Data Model
 
-## Collections
+## ADDED Requirements
 
-### `tokens/{date}`
-每日動態 QR token。
+### Requirement: Collection `tokens/{date}`
+系統 **SHALL** 建立 `tokens/{date}` 集合儲存每日動態 QR token。
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -13,8 +13,13 @@
 
 Key: date 格式 `YYYY-MM-DD`
 
-### `punches/{date}/records/{recordId}`
-打卡記錄。
+#### Scenario: 查詢當日 token
+- Given: 管理端開啟 admin.html
+- When: 檢查當日是否已有 token
+- Then: 從 Firestore `tokens/{today}` 讀取
+
+### Requirement: Collection `punches/{date}/records/{recordId}`
+系統 **SHALL** 建立 `punches/{date}/records/{recordId}` 集合儲存打卡記錄。
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -24,6 +29,11 @@ Key: date 格式 `YYYY-MM-DD`
 | gps | map | `{ lat: number, lng: number, accuracy: number }` |
 | token | string | 驗證用，對應 tokens collection |
 | userAgent | string | 瀏覽器 UA |
+
+#### Scenario: 寫入打卡記錄
+- Given: 打卡端掃碼成功且 GPS 取得
+- When: 寫入打卡記錄到 Firestore `punches/{today}/records`
+- Then: 自動判定 clock_in/clock_out（偶數=上班，奇數=下班）
 
 ### 自動判定邏輯
 - 查詢 `punches/{today}/records` where userId == "capo" order by timestamp

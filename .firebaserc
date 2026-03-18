@@ -1,5 +1,14 @@
 {
   "projects": {
     "default": "medialab-356306"
+  },
+  "targets": {
+    "medialab-356306": {
+      "hosting": {
+        "punch-clock": [
+          "punch-clock-cna"
+        ]
+      }
+    }
   }
 }
