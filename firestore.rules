@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /tokens/{date} {
+      allow read: if true;
+      allow write: if true;  // MVP: 無驗證，日後加 Firebase Auth
+    }
+    match /punches/{date}/records/{record} {
+      allow read: if true;
+      allow write: if true;  // MVP: 無驗證，日後加 Firebase Auth
+    }
+  }
+}

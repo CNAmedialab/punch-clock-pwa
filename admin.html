@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#4f46e5" />
+  <title>打卡管理 — Admin</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <!-- qrcode.js for generating QR codes -->
+  <script src="https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <span class="logo">🔑</span>
+    <div>
+      <h1>打卡管理</h1>
+      <div class="subtitle" id="header-date">載入中…</div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="main-content">
+
+    <!-- Status Card -->
+    <div class="card">
+      <div class="card-title">📊 今日狀態</div>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="status-badge status-idle" id="token-status">檢查中…</span>
+      </div>
+      <div id="token-info" style="display:none;">
+        <div class="token-info">
+          <strong>Token</strong>
+          <div class="token-value" id="token-display"></div>
+        </div>
+        <div class="token-info">
+          <div id="expiry-info"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- QR Code Card -->
+    <div class="card">
+      <div class="card-title">📱 每日 QR Code</div>
+      <div id="qr-container">
+        <div style="color:var(--text-muted); font-size:0.875rem;">產生 QR Code 中…</div>
+      </div>
+
+      <div style="margin-top:16px; display:flex; flex-direction:column; gap:8px;">
+        <button class="btn btn-primary" id="btn-regen" onclick="regenerateToken()" style="display:none;">
+          🔄 重新產生 Token
+        </button>
+        <button class="btn btn-outline" onclick="downloadQR()">
+          💾 下載 QR Code
+        </button>
+      </div>
+    </div>
+
+    <!-- Today's Records Card -->
+    <div class="card">
+      <div class="card-title">📋 今日打卡記錄</div>
+      <div id="records-list">
+        <div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">載入中…</div>
+      </div>
+      <hr class="divider" />
+      <button class="btn btn-outline" onclick="loadTodayRecords()">
+        🔄 重新整理
+      </button>
+    </div>
+
+    <!-- All Tokens Card -->
+    <div class="card">
+      <div class="card-title">🗂 Token 歷史</div>
+      <div id="tokens-list">
+        <div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">載入中…</div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      collection,
+      query,
+      where,
+      orderBy,
+      getDocs,
+      serverTimestamp,
+      Timestamp
+    } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyCyiVAU1IglZV5ZkrE7OQfEfgTrCW-2_4E",
+      authDomain: "medialab-356306.firebaseapp.com",
+      projectId: "medialab-356306",
+      storageBucket: "medialab-356306.appspot.com",
+      messagingSenderId: "1007110536706",
+      appId: "1:1007110536706:web:42e05c2fb1ba799262311b"
+    };
+
+    const app = initializeApp(FIREBASE_CONFIG);
+    const db = getFirestore(app);
+
+    // Expose to global scope
+    window.__db = db;
+    window.__fsOps = { doc, getDoc, setDoc, collection, query, where, orderBy, getDocs, serverTimestamp, Timestamp };
+
+    // Initialize
+    init();
+
+    async function init() {
+      // Update header date
+      const today = getTodayDate();
+      document.getElementById('header-date').textContent = formatDate(today);
+
+      // Register SW
+      registerSW();
+
+      // Load or create today's token
+      await loadOrCreateToken(today);
+
+      // Load records
+      await loadTodayRecords();
+
+      // Load token history
+      await loadTokenHistory();
+    }
+
+    async function loadOrCreateToken(today) {
+      const { doc, getDoc } = window.__fsOps;
+      const db = window.__db;
+
+      const statusEl = document.getElementById('token-status');
+      statusEl.className = 'status-badge status-processing';
+      statusEl.textContent = '查詢中…';
+
+      try {
+        const tokenRef = doc(db, 'tokens', today);
+        const snap = await getDoc(tokenRef);
+
+        if (snap.exists()) {
+          // Token already exists
+          const data = snap.data();
+          statusEl.className = 'status-badge status-success';
+          statusEl.textContent = '✅ 今日 Token 已存在';
+          displayTokenInfo(data);
+          generateQRCode(buildQRPayload(today, data.token, data.expiresAt));
+          document.getElementById('btn-regen').style.display = 'block';
+        } else {
+          // Create new token
+          await createDailyToken(today);
+        }
+      } catch (err) {
+        console.error('Token load error:', err);
+        statusEl.className = 'status-badge status-error';
+        statusEl.textContent = '❌ 載入失敗';
+        showToast('無法載入 Token: ' + err.message, 'error');
+      }
+    }
+
+    async function createDailyToken(today) {
+      const { doc, setDoc, serverTimestamp, Timestamp } = window.__fsOps;
+      const db = window.__db;
+      const statusEl = document.getElementById('token-status');
+
+      statusEl.className = 'status-badge status-processing';
+      statusEl.textContent = '產生 Token…';
+
+      const token = generateUUID();
+
+      // Calculate expiry: today 23:59:59
+      const expDate = new Date();
+      expDate.setHours(23, 59, 59, 0);
+      const expiresAt = Timestamp.fromDate(expDate);
+      const exp = Math.floor(expDate.getTime() / 1000);
+
+      const tokenData = {
+        token,
+        createdAt: serverTimestamp(),
+        expiresAt,
+        exp
+      };
+
+      const tokenRef = doc(db, 'tokens', today);
+      await setDoc(tokenRef, tokenData);
+
+      statusEl.className = 'status-badge status-success';
+      statusEl.textContent = '✅ 新 Token 已產生';
+
+      displayTokenInfo({ token, expiresAt, exp });
+      generateQRCode(buildQRPayload(today, token, expiresAt));
+      document.getElementById('btn-regen').style.display = 'block';
+
+      showToast('✅ 今日 Token 已產生', 'success');
+    }
+
+    window.regenerateToken = async function() {
+      const today = getTodayDate();
+      if (!confirm(`確定要重新產生今日 Token 嗎？\n舊的 QR Code 將立即失效！`)) return;
+      await createDailyToken(today);
+      showToast('🔄 Token 已重新產生', 'info');
+    };
+
+    function buildQRPayload(date, token, expiresAt) {
+      let exp;
+      if (typeof expiresAt === 'number') {
+        exp = expiresAt;
+      } else if (expiresAt && expiresAt.toDate) {
+        exp = Math.floor(expiresAt.toDate().getTime() / 1000);
+      } else {
+        exp = getTodayExpiry();
+      }
+
+      return JSON.stringify({
+        app: 'punch-clock',
+        date,
+        token,
+        exp
+      });
+    }
+
+    function displayTokenInfo(data) {
+      document.getElementById('token-info').style.display = 'block';
+      document.getElementById('token-display').textContent = data.token;
+
+      let expiryStr = '未知';
+      if (data.expiresAt) {
+        const expiryDate = data.expiresAt.toDate ? data.expiresAt.toDate() : new Date(data.expiresAt * 1000);
+        expiryStr = expiryDate.toLocaleString('zh-TW');
+      }
+      document.getElementById('expiry-info').textContent = `過期時間：${expiryStr}`;
+    }
+
+    function generateQRCode(payload) {
+      const container = document.getElementById('qr-container');
+      container.innerHTML = '';
+
+      const canvas = document.createElement('canvas');
+      container.appendChild(canvas);
+
+      window.__currentQRPayload = payload;
+
+      QRCode.toCanvas(canvas, payload, {
+        width: 280,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#ffffff'
+        },
+        errorCorrectionLevel: 'M'
+      }, err => {
+        if (err) {
+          console.error('QR generation error:', err);
+          container.innerHTML = '<div style="color:var(--error); padding:20px;">QR Code 產生失敗</div>';
+          showToast('QR Code 產生失敗: ' + err.message, 'error');
+        }
+      });
+    }
+
+    window.downloadQR = function() {
+      const canvas = document.querySelector('#qr-container canvas');
+      if (!canvas) {
+        showToast('QR Code 尚未產生', 'warning');
+        return;
+      }
+
+      const link = document.createElement('a');
+      link.download = `punch-qr-${getTodayDate()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    };
+
+    // ===== Load Today's Records =====
+    window.loadTodayRecords = async function() {
+      const { collection, query, where, orderBy, getDocs } = window.__fsOps;
+      const db = window.__db;
+      const today = getTodayDate();
+      const list = document.getElementById('records-list');
+
+      try {
+        const recordsRef = collection(db, 'punches', today, 'records');
+        const q = query(recordsRef, where('userId', '==', 'capo'), orderBy('timestamp'));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          list.innerHTML = '<div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">今日尚無打卡記錄</div>';
+          return;
+        }
+
+        list.innerHTML = '';
+        snapshot.forEach((docSnap, idx) => {
+          const data = docSnap.data();
+          const isIn = data.type === 'clock_in';
+          const timeStr = data.timestamp ? formatTime(data.timestamp) : '未知時間';
+
+          const item = document.createElement('div');
+          item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);';
+          item.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span style="font-size:1.2rem;">${isIn ? '☀️' : '🌙'}</span>
+              <div>
+                <div style="font-weight:600; font-size:0.9rem;">${isIn ? '上班' : '下班'}</div>
+                <div style="font-size:0.75rem; color:var(--text-muted);">${data.userId}</div>
+                <div style="font-size:0.75rem; color:var(--text-muted);">
+                  ${data.gps?.lat ? `📍 ${data.gps.lat.toFixed(4)}, ${data.gps.lng.toFixed(4)}` : '📍 GPS 無資料'}
+                </div>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:0.9rem; font-weight:600;">${timeStr}</div>
+              ${data.gps?.accuracy ? `<div style="font-size:0.75rem; color:var(--text-muted);">±${data.gps.accuracy}m</div>` : ''}
+            </div>
+          `;
+          list.appendChild(item);
+        });
+      } catch (err) {
+        console.error('Load records error:', err);
+        list.innerHTML = `<div style="color:var(--error); font-size:0.85rem; padding:12px;">載入失敗: ${err.message}</div>`;
+      }
+    };
+
+    // ===== Load Token History =====
+    async function loadTokenHistory() {
+      const { collection, getDocs } = window.__fsOps;
+      const db = window.__db;
+      const list = document.getElementById('tokens-list');
+
+      try {
+        const tokensRef = collection(db, 'tokens');
+        const snapshot = await getDocs(tokensRef);
+
+        if (snapshot.empty) {
+          list.innerHTML = '<div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">無歷史記錄</div>';
+          return;
+        }
+
+        // Sort by date descending
+        const items = [];
+        snapshot.forEach(docSnap => {
+          items.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        items.sort((a, b) => b.id.localeCompare(a.id));
+
+        list.innerHTML = '';
+        items.forEach(item => {
+          const today = getTodayDate();
+          const isToday = item.id === today;
+
+          const div = document.createElement('div');
+          div.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);';
+          div.innerHTML = `
+            <div>
+              <div style="font-weight:600; font-size:0.9rem;">
+                ${item.id} ${isToday ? '<span style="font-size:0.7rem; background:var(--primary); color:white; padding:2px 6px; border-radius:10px; margin-left:4px;">今日</span>' : ''}
+              </div>
+              <div style="font-size:0.7rem; color:var(--text-muted); font-family:monospace;">${item.token?.substring(0, 12)}…</div>
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); text-align:right;">
+              ${item.createdAt?.toDate ? item.createdAt.toDate().toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit'}) : ''}
+            </div>
+          `;
+          list.appendChild(div);
+        });
+      } catch (err) {
+        console.error('Load tokens error:', err);
+        list.innerHTML = `<div style="color:var(--error); font-size:0.85rem; padding:12px;">載入失敗: ${err.message}</div>`;
+      }
+    }
+
+  </script>
+
+  <!-- Utils -->
+  <script src="/js/utils.js"></script>
+
+</body>
+</html>

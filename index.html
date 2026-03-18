@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="打卡" />
+  <title>掃碼打卡</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <span class="logo">⏰</span>
+    <div>
+      <h1>掃碼打卡</h1>
+      <div class="subtitle" id="header-date">載入中…</div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="main-content">
+
+    <!-- Result Panel (shown after punch) -->
+    <div class="result-panel" id="result-panel">
+      <div class="result-icon" id="result-icon"></div>
+      <div class="result-title" id="result-title"></div>
+      <div class="result-time" id="result-time"></div>
+      <span class="result-type" id="result-type"></span>
+      <div class="result-detail" id="result-detail"></div>
+      <hr class="divider" />
+      <div class="info-grid" id="result-info-grid"></div>
+      <hr class="divider" />
+      <button class="btn btn-outline" id="btn-scan-again" onclick="resetScanner()">
+        🔄 再次掃描
+      </button>
+    </div>
+
+    <!-- Scanner Card -->
+    <div class="card" id="scanner-card">
+      <div class="card-title">📷 掃描 QR Code</div>
+
+      <!-- Status -->
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="status-badge status-idle" id="scan-status">等待掃描</span>
+      </div>
+
+      <!-- GPS Indicator -->
+      <div class="gps-indicator" id="gps-indicator">
+        <div class="gps-dot" id="gps-dot"></div>
+        <span id="gps-text">GPS 未啟用</span>
+      </div>
+
+      <!-- Scanner Box -->
+      <div id="scanner-container">
+        <div id="reader"></div>
+      </div>
+
+      <!-- Controls -->
+      <div style="margin-top:12px; display:flex; flex-direction:column; gap:8px;">
+        <button class="btn btn-primary" id="btn-start" onclick="startScanner()">
+          📷 開始掃描
+        </button>
+        <button class="btn btn-outline" id="btn-stop" onclick="stopScanner()" style="display:none;">
+          ⏹ 停止掃描
+        </button>
+      </div>
+    </div>
+
+    <!-- Today's Records Card -->
+    <div class="card" id="records-card">
+      <div class="card-title">📋 今日打卡記錄</div>
+      <div id="records-list">
+        <div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">
+          載入中…
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      collection,
+      addDoc,
+      query,
+      where,
+      orderBy,
+      getDocs,
+      serverTimestamp
+    } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js';
+
+    // Config
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyCyiVAU1IglZV5ZkrE7OQfEfgTrCW-2_4E",
+      authDomain: "medialab-356306.firebaseapp.com",
+      projectId: "medialab-356306",
+      storageBucket: "medialab-356306.appspot.com",
+      messagingSenderId: "1007110536706",
+      appId: "1:1007110536706:web:42e05c2fb1ba799262311b"
+    };
+
+    const app = initializeApp(FIREBASE_CONFIG);
+    const db = getFirestore(app);
+
+    // Make db globally accessible for scanner callback
+    window.__db = db;
+    window.__firestore = {
+      doc, getDoc, collection, addDoc, query, where, orderBy, getDocs, serverTimestamp
+    };
+
+    // Initialize
+    init();
+
+    async function init() {
+      // Update header date
+      const today = getTodayDate();
+      document.getElementById('header-date').textContent = formatDate(today);
+
+      // Register SW
+      registerSW();
+
+      // Load today's records
+      loadTodayRecords();
+    }
+
+    // ===== Scanner =====
+    let html5QrcodeScanner = null;
+    let isProcessing = false;
+
+    window.startScanner = async function() {
+      if (html5QrcodeScanner) return;
+
+      document.getElementById('btn-start').style.display = 'none';
+      document.getElementById('btn-stop').style.display = 'block';
+      setScanStatus('processing', '掃描中…');
+
+      try {
+        html5QrcodeScanner = new Html5Qrcode('reader');
+
+        const config = {
+          fps: 10,
+          qrbox: { width: 250, height: 250 },
+          aspectRatio: 1.0,
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+        };
+
+        await html5QrcodeScanner.start(
+          { facingMode: 'environment' },
+          config,
+          onScanSuccess,
+          onScanFailure
+        );
+      } catch (err) {
+        console.error('Scanner start error:', err);
+        setScanStatus('error', '無法啟動相機');
+        showToast('無法啟動相機：' + err.message, 'error');
+        resetScannerUI();
+      }
+    };
+
+    window.stopScanner = async function() {
+      if (html5QrcodeScanner) {
+        try {
+          await html5QrcodeScanner.stop();
+        } catch (e) {}
+        html5QrcodeScanner = null;
+      }
+      resetScannerUI();
+    };
+
+    window.resetScanner = function() {
+      // Hide result, show scanner
+      document.getElementById('result-panel').classList.remove('show', 'success', 'error');
+      document.getElementById('scanner-card').style.display = 'block';
+      isProcessing = false;
+      setScanStatus('idle', '等待掃描');
+    };
+
+    function resetScannerUI() {
+      document.getElementById('btn-start').style.display = 'block';
+      document.getElementById('btn-stop').style.display = 'none';
+      setScanStatus('idle', '等待掃描');
+    }
+
+    function setScanStatus(type, text) {
+      const el = document.getElementById('scan-status');
+      el.className = `status-badge status-${type}`;
+      el.textContent = text;
+    }
+
+    async function onScanSuccess(decodedText) {
+      if (isProcessing) return;
+      isProcessing = true;
+
+      await stopScanner();
+      setScanStatus('processing', '驗證中…');
+
+      try {
+        const qrData = JSON.parse(decodedText);
+        await validateAndPunch(qrData);
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          showPunchError('QR Code 格式錯誤', '無法解析 QR Code 內容');
+        } else {
+          showPunchError('打卡失敗', err.message);
+        }
+        isProcessing = false;
+      }
+    }
+
+    function onScanFailure(error) {
+      // Normal scanning errors — ignore
+    }
+
+    // ===== Token Validation =====
+    async function validateAndPunch(qrData) {
+      const db = window.__db;
+      const { doc, getDoc, collection, addDoc, query, where, orderBy, getDocs, serverTimestamp } = window.__firestore;
+
+      // 1. Check app field
+      if (qrData.app !== 'punch-clock') {
+        throw new Error('無效的 QR Code（非打卡 QR）');
+      }
+
+      // 2. Check date matches today
+      const today = getTodayDate();
+      if (qrData.date !== today) {
+        throw new Error(`QR Code 日期不符（${qrData.date}）`);
+      }
+
+      // 3. Check expiry
+      const now = Math.floor(Date.now() / 1000);
+      if (qrData.exp < now) {
+        throw new Error('QR Code 已過期');
+      }
+
+      // 4. Verify token in Firestore
+      setScanStatus('processing', '查詢 Firestore…');
+      const tokenRef = doc(db, 'tokens', today);
+      const tokenSnap = await getDoc(tokenRef);
+
+      if (!tokenSnap.exists()) {
+        throw new Error('今日 token 不存在');
+      }
+
+      const tokenData = tokenSnap.data();
+      if (tokenData.token !== qrData.token) {
+        throw new Error('Token 不符，可能是舊 QR Code');
+      }
+
+      // Also check server-side expiry
+      if (tokenData.expiresAt && tokenData.expiresAt.toDate) {
+        if (tokenData.expiresAt.toDate() < new Date()) {
+          throw new Error('Token 已過期');
+        }
+      }
+
+      // 5. Get GPS
+      setScanStatus('processing', '取得 GPS 位置…');
+      setGpsStatus('acquiring', '定位中…');
+
+      let gps;
+      try {
+        gps = await getGPS();
+        setGpsStatus('acquired', `精度 ±${gps.accuracy}m`);
+      } catch (gpsErr) {
+        // GPS failed — still allow punch but record null
+        setGpsStatus('error', gpsErr.message);
+        showToast('GPS 取得失敗，仍繼續打卡', 'warning');
+        gps = { lat: null, lng: null, accuracy: null };
+      }
+
+      // 6. Determine clock_in or clock_out
+      setScanStatus('processing', '判定打卡類型…');
+      const recordsRef = collection(db, 'punches', today, 'records');
+      const q = query(recordsRef, where('userId', '==', 'capo'), orderBy('timestamp'));
+      const snapshot = await getDocs(q);
+      const existingCount = snapshot.size;
+
+      const punchType = existingCount % 2 === 0 ? 'clock_in' : 'clock_out';
+
+      // 7. Write punch record
+      setScanStatus('processing', '寫入打卡記錄…');
+      const record = {
+        userId: 'capo',
+        type: punchType,
+        timestamp: serverTimestamp(),
+        gps: gps,
+        token: qrData.token,
+        userAgent: navigator.userAgent
+      };
+
+      const docRef = await addDoc(recordsRef, record);
+
+      // 8. Show success
+      showPunchSuccess(punchType, gps, existingCount + 1);
+
+      // Reload records
+      loadTodayRecords();
+    }
+
+    // ===== UI Feedback =====
+    function showPunchSuccess(type, gps, totalCount) {
+      const panel = document.getElementById('result-panel');
+      panel.classList.remove('error');
+      panel.classList.add('show', 'success');
+      document.getElementById('scanner-card').style.display = 'none';
+
+      const isClockIn = type === 'clock_in';
+      document.getElementById('result-icon').textContent = isClockIn ? '✅' : '🏁';
+      document.getElementById('result-title').textContent = isClockIn ? '上班打卡成功！' : '下班打卡成功！';
+
+      const now = new Date();
+      document.getElementById('result-time').textContent = now.toLocaleTimeString('zh-TW', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+
+      const typeEl = document.getElementById('result-type');
+      typeEl.className = `result-type type-${type}`;
+      typeEl.textContent = isClockIn ? '上班' : '下班';
+
+      document.getElementById('result-detail').textContent = `第 ${totalCount} 筆打卡記錄`;
+
+      // Info grid
+      const grid = document.getElementById('result-info-grid');
+      grid.innerHTML = `
+        <div class="info-item">
+          <div class="info-label">日期</div>
+          <div class="info-value">${formatDate(getTodayDate())}</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">GPS 精度</div>
+          <div class="info-value">${gps.accuracy !== null ? `±${gps.accuracy}m` : '無'}</div>
+        </div>
+        ${gps.lat !== null ? `
+        <div class="info-item">
+          <div class="info-label">緯度</div>
+          <div class="info-value">${gps.lat.toFixed(5)}</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">經度</div>
+          <div class="info-value">${gps.lng.toFixed(5)}</div>
+        </div>
+        ` : ''}
+      `;
+
+      setScanStatus('success', '打卡成功');
+      showToast(isClockIn ? '✅ 上班打卡成功！' : '🏁 下班打卡成功！', 'success', 5000);
+    }
+
+    function showPunchError(title, detail) {
+      const panel = document.getElementById('result-panel');
+      panel.classList.remove('success');
+      panel.classList.add('show', 'error');
+      document.getElementById('scanner-card').style.display = 'none';
+
+      document.getElementById('result-icon').textContent = '❌';
+      document.getElementById('result-title').textContent = title;
+      document.getElementById('result-time').textContent = '';
+      document.getElementById('result-type').textContent = '';
+      document.getElementById('result-detail').textContent = detail;
+      document.getElementById('result-info-grid').innerHTML = '';
+
+      setScanStatus('error', '打卡失敗');
+      showToast('❌ ' + detail, 'error', 5000);
+    }
+
+    // ===== GPS Status ===== 
+    function setGpsStatus(state, text) {
+      const dot = document.getElementById('gps-dot');
+      const textEl = document.getElementById('gps-text');
+      dot.className = `gps-dot ${state}`;
+      textEl.textContent = text;
+    }
+
+    // ===== Load Today's Records =====
+    async function loadTodayRecords() {
+      const db = window.__db;
+      const { collection, query, where, orderBy, getDocs } = window.__firestore;
+      const today = getTodayDate();
+      const list = document.getElementById('records-list');
+
+      try {
+        const recordsRef = collection(db, 'punches', today, 'records');
+        const q = query(recordsRef, where('userId', '==', 'capo'), orderBy('timestamp'));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          list.innerHTML = '<div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">今日尚無打卡記錄</div>';
+          return;
+        }
+
+        list.innerHTML = '';
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          const isIn = data.type === 'clock_in';
+          const timeStr = data.timestamp ? formatTime(data.timestamp) : '未知時間';
+
+          const item = document.createElement('div');
+          item.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);';
+          item.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span style="font-size:1.2rem;">${isIn ? '☀️' : '🌙'}</span>
+              <div>
+                <div style="font-weight:600; font-size:0.9rem;">${isIn ? '上班' : '下班'}</div>
+                <div style="font-size:0.75rem; color:var(--text-muted);">
+                  ${data.gps?.lat ? `${data.gps.lat.toFixed(4)}, ${data.gps.lng.toFixed(4)}` : 'GPS 無資料'}
+                </div>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:0.9rem; font-weight:600;">${timeStr}</div>
+              ${data.gps?.accuracy ? `<div style="font-size:0.75rem; color:var(--text-muted);">±${data.gps.accuracy}m</div>` : ''}
+            </div>
+          `;
+          list.appendChild(item);
+        });
+      } catch (err) {
+        console.error('Load records error:', err);
+        list.innerHTML = '<div style="color:var(--error); font-size:0.85rem; text-align:center; padding:12px;">載入失敗</div>';
+      }
+    }
+
+  </script>
+
+  <!-- html5-qrcode -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <!-- Utils -->
+  <script src="/js/utils.js"></script>
+
+</body>
+</html>
