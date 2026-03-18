@@ -8,7 +8,16 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="/css/style.css" />
   <!-- qrcode.js for generating QR codes -->
-  <script src="https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script>
+    // Ensure QRCode is available globally before module runs
+    window.__qrReady = new Promise(resolve => {
+      if (typeof QRCode !== 'undefined') return resolve();
+      const check = setInterval(() => {
+        if (typeof QRCode !== 'undefined') { clearInterval(check); resolve(); }
+      }, 50);
+    });
+  </script>
 </head>
 <body>
   <!-- Header -->
@@ -115,8 +124,8 @@
     window.__db = db;
     window.__fsOps = { doc, getDoc, setDoc, collection, query, where, orderBy, getDocs, serverTimestamp, Timestamp };
 
-    // Initialize
-    init();
+    // Initialize after QRCode lib is ready
+    window.__qrReady.then(() => init());
 
     async function init() {
       // Update header date
@@ -245,38 +254,34 @@
       const container = document.getElementById('qr-container');
       container.innerHTML = '';
 
-      const canvas = document.createElement('canvas');
-      container.appendChild(canvas);
-
       window.__currentQRPayload = payload;
 
-      QRCode.toCanvas(canvas, payload, {
-        width: 280,
-        margin: 2,
-        color: {
-          dark: '#000000',
-          light: '#ffffff'
-        },
-        errorCorrectionLevel: 'M'
-      }, err => {
-        if (err) {
-          console.error('QR generation error:', err);
-          container.innerHTML = '<div style="color:var(--error); padding:20px;">QR Code 產生失敗</div>';
-          showToast('QR Code 產生失敗: ' + err.message, 'error');
-        }
-      });
+      try {
+        window.__qrInstance = new QRCode(container, {
+          text: payload,
+          width: 280,
+          height: 280,
+          colorDark: '#000000',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } catch (err) {
+        console.error('QR generation error:', err);
+        container.innerHTML = '<div style="color:var(--error); padding:20px;">QR Code 產生失敗</div>';
+      }
     }
 
     window.downloadQR = function() {
+      const img = document.querySelector('#qr-container img');
       const canvas = document.querySelector('#qr-container canvas');
-      if (!canvas) {
+      if (!img && !canvas) {
         showToast('QR Code 尚未產生', 'warning');
         return;
       }
 
       const link = document.createElement('a');
       link.download = `punch-qr-${getTodayDate()}.png`;
-      link.href = canvas.toDataURL('image/png');
+      link.href = img ? img.src : canvas.toDataURL('image/png');
       link.click();
     };
 
