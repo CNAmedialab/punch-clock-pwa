@@ -58,31 +58,6 @@
       color: var(--text-muted, #6b7280);
       margin-bottom: 28px;
     }
-    .form-group {
-      margin-bottom: 16px;
-    }
-    .form-label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text, #111827);
-      margin-bottom: 6px;
-    }
-    .form-input {
-      width: 100%;
-      padding: 10px 14px;
-      border: 1.5px solid var(--border, #e5e7eb);
-      border-radius: 10px;
-      font-size: 1rem;
-      background: var(--bg, #f8f9fa);
-      color: var(--text, #111827);
-      box-sizing: border-box;
-      transition: border-color 0.2s;
-    }
-    .form-input:focus {
-      outline: none;
-      border-color: var(--primary, #4f46e5);
-    }
     .login-error {
       color: var(--error, #ef4444);
       font-size: 0.85rem;
@@ -93,8 +68,6 @@
     .btn-login {
       width: 100%;
       padding: 12px;
-      background: var(--primary, #4f46e5);
-      color: white;
       border: none;
       border-radius: 10px;
       font-size: 1rem;
@@ -182,8 +155,8 @@
   <!-- Main -->
   <main class="main-content">
 
-    <!-- Status Card -->
-    <div class="card">
+    <!-- Status Card (hidden) -->
+    <!-- <div class="card">
       <div class="card-title">📊 今日狀態</div>
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
         <span class="status-badge status-idle" id="token-status">檢查中…</span>
@@ -197,7 +170,7 @@
           <div id="expiry-info"></div>
         </div>
       </div>
-    </div>
+    </div> -->
 
     <!-- QR Code Card -->
     <div class="card">
@@ -210,9 +183,9 @@
         <button class="btn btn-primary" id="btn-regen" onclick="regenerateToken()" style="display:none;">
           🔄 重新產生 Token
         </button>
-        <button class="btn btn-outline" onclick="downloadQR()">
+        <!-- <button class="btn btn-outline" onclick="downloadQR()">
           💾 下載 QR Code
-        </button>
+        </button> -->
       </div>
     </div>
 
@@ -354,10 +327,6 @@
       const { doc, getDoc } = window.__fsOps;
       const db = window.__db;
 
-      const statusEl = document.getElementById('token-status');
-      statusEl.className = 'status-badge status-processing';
-      statusEl.textContent = '查詢中…';
-
       try {
         const tokenRef = doc(db, 'tokens', today);
         const snap = await getDoc(tokenRef);
@@ -365,8 +334,6 @@
         if (snap.exists()) {
           // Token already exists
           const data = snap.data();
-          statusEl.className = 'status-badge status-success';
-          statusEl.textContent = '✅ 今日 Token 已存在';
           displayTokenInfo(data);
           generateQRCode(buildQRPayload(today, data.token, data.expiresAt));
           document.getElementById('btn-regen').style.display = 'block';
@@ -376,8 +343,6 @@
         }
       } catch (err) {
         console.error('Token load error:', err);
-        statusEl.className = 'status-badge status-error';
-        statusEl.textContent = '❌ 載入失敗';
         showToast('無法載入 Token: ' + err.message, 'error');
       }
     }
@@ -385,10 +350,6 @@
     async function createDailyToken(today) {
       const { doc, setDoc, serverTimestamp, Timestamp } = window.__fsOps;
       const db = window.__db;
-      const statusEl = document.getElementById('token-status');
-
-      statusEl.className = 'status-badge status-processing';
-      statusEl.textContent = '產生 Token…';
 
       const token = generateUUID();
 
@@ -408,21 +369,18 @@
       const tokenRef = doc(db, 'tokens', today);
       await setDoc(tokenRef, tokenData);
 
-      statusEl.className = 'status-badge status-success';
-      statusEl.textContent = '✅ 新 Token 已產生';
-
       displayTokenInfo({ token, expiresAt, exp });
       generateQRCode(buildQRPayload(today, token, expiresAt));
       document.getElementById('btn-regen').style.display = 'block';
 
-      showToast('✅ 今日 Token 已產生', 'success');
+      showToast('今日 Token 已產生', 'success');
     }
 
     window.regenerateToken = async function() {
       const today = getTodayDate();
       if (!confirm(`確定要重新產生今日 Token 嗎？\n舊的 QR Code 將立即失效！`)) return;
       await createDailyToken(today);
-      showToast('🔄 Token 已重新產生', 'info');
+      showToast('Token 已重新產生', 'info');
     };
 
     function buildQRPayload(date, token, expiresAt) {
@@ -444,15 +402,7 @@
     }
 
     function displayTokenInfo(data) {
-      document.getElementById('token-info').style.display = 'block';
-      document.getElementById('token-display').textContent = data.token;
-
-      let expiryStr = '未知';
-      if (data.expiresAt) {
-        const expiryDate = data.expiresAt.toDate ? data.expiresAt.toDate() : new Date(data.expiresAt * 1000);
-        expiryStr = expiryDate.toLocaleString('zh-TW');
-      }
-      document.getElementById('expiry-info').textContent = `過期時間：${expiryStr}`;
+      // token-info card is commented out; keep function for future use
     }
 
     function generateQRCode(payload) {
